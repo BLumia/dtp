@@ -18,7 +18,8 @@ import (
 )
 
 type typeCmdArgs struct {
-	proxy *string
+	proxy    *string
+	organize *bool
 }
 
 func removeDuplicates(elements []string) []string {
@@ -46,6 +47,7 @@ func parseArgs() typeCmdArgs {
 	var cmdArgs typeCmdArgs
 
 	cmdArgs.proxy = flag.String("p", "socks5://127.0.0.1:1080/", "a valid proxy url")
+	cmdArgs.organize = flag.Bool("o", false, "self-organize downloaded file")
 
 	flag.Parse()
 
@@ -161,12 +163,19 @@ func getTargetFolderAndFileName(sourceURL *url.URL, targetURL string) string {
 	return fullPath
 }
 
-func downloadAndSave(targetDownloadPath string, targetURL string, httpClient *http.Client) {
+func downloadAndSave(targetDownloadPath string, targetURL string, httpClient *http.Client, organize bool) {
 	pathStr := path.Dir(targetDownloadPath)
 	fileName := path.Base(targetDownloadPath)
 
-	if false {
-		fmt.Println(pathStr)
+	if organize {
+		if _, err := os.Stat(pathStr); os.IsNotExist(err) {
+			fmt.Println("Creating new folder for store resources: " + pathStr)
+			err := os.MkdirAll(pathStr, 0755)
+			if err != nil {
+				fmt.Println("Error creating folder for store resource: " + fileName)
+			}
+		}
+		fileName = targetDownloadPath
 	}
 
 	out, err := os.Create(fileName)
@@ -196,7 +205,7 @@ func main() {
 
 	for _, targetURL := range matchedResult {
 		targetDownloadPath := getTargetFolderAndFileName(singleURL, targetURL)
-		downloadAndSave(targetDownloadPath, targetURL, httpClient)
+		downloadAndSave(targetDownloadPath, targetURL, httpClient, *cmdArgs.organize)
 	}
 
 	fmt.Println("Download finished!")
