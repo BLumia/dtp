@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"path"
 	"regexp"
 
+	"github.com/antchfx/htmlquery"
 	"golang.org/x/net/proxy"
 )
 
@@ -89,6 +91,25 @@ func getHTTPClient(cmdArgs typeCmdArgs) *http.Client {
 	return httpClient
 }
 
+func parseTwitterDomByXPath(htmlDom []byte) []string {
+	doc, _ := htmlquery.Parse(bytes.NewReader(htmlDom))
+	list := htmlquery.Find(doc, "//div[contains(@class,'permalink-tweet')][1]//div[contains(@class,'AdaptiveMedia-photoContainer')]//img/@src")
+	var matchedResult []string
+	for _, oneElement := range list {
+		matchedResult = append(matchedResult, htmlquery.SelectAttr(oneElement, "src"))
+	}
+	matchedResult = removeDuplicates(matchedResult)
+
+	return matchedResult
+}
+
+func parseTwitterDomByRegex(htmlDom []byte) []string {
+	re := regexp.MustCompile("http[s]?:\\/\\/pbs\\.twimg\\.com\\/media\\/\\w+\\.(?:jpg|png)")
+	matchedResult := removeDuplicates(re.FindAllString(string(htmlDom), -1))
+
+	return matchedResult
+}
+
 func parseDOM(url *url.URL, client *http.Client) []string {
 	fmt.Println("Downloading web page...")
 
@@ -105,8 +126,13 @@ func parseDOM(url *url.URL, client *http.Client) []string {
 		os.Exit(2)
 	}
 
-	re := regexp.MustCompile("http[s]?:\\/\\/pbs\\.twimg\\.com\\/media\\/\\w+\\.(?:jpg|png)")
-	matchedResult := removeDuplicates(re.FindAllString(string(htmlDomStr), -1))
+	fmt.Println("Parsing web page...")
+	matchedResult := parseTwitterDomByXPath(htmlDomStr)
+
+	if len(matchedResult) == 0 {
+		fmt.Println("XPath match didn't get any result, fallback to RegEx match...")
+		matchedResult = parseTwitterDomByRegex(htmlDomStr)
+	}
 
 	if len(matchedResult) == 0 {
 		fmt.Println("No resource(s) found on page: " + url.String())
@@ -154,9 +180,8 @@ func downloadAndSave(targetDownloadPath string, targetURL string, httpClient *ht
 	if err != nil {
 		fmt.Println("Error donwloading resource: " + targetURL)
 		return
-	} else {
-		defer resp.Body.Close()
 	}
+	defer resp.Body.Close()
 
 	io.Copy(out, resp.Body)
 }
