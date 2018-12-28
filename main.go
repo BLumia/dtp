@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"path/filepath"
 	"regexp"
 
 	"github.com/antchfx/htmlquery"
@@ -18,8 +19,9 @@ import (
 )
 
 type typeCmdArgs struct {
-	proxy    *string
-	organize *bool
+	proxy      *string
+	organize   *bool
+	checkExist *bool
 }
 
 func removeDuplicates(elements []string) []string {
@@ -48,6 +50,7 @@ func parseArgs() typeCmdArgs {
 
 	cmdArgs.proxy = flag.String("p", "socks5://127.0.0.1:1080/", "a valid proxy url")
 	cmdArgs.organize = flag.Bool("o", false, "self-organize downloaded file")
+	cmdArgs.checkExist = flag.Bool("e", false, "check if resource existed to avoid re-download")
 
 	flag.Parse()
 
@@ -195,12 +198,41 @@ func downloadAndSave(targetDownloadPath string, targetURL string, httpClient *ht
 	io.Copy(out, resp.Body)
 }
 
+func checkExist(cmdArgs typeCmdArgs, url *url.URL, organize bool) {
+	if !*cmdArgs.checkExist {
+		return
+	}
+
+	fakePath := getTargetFolderAndFileName(url, "*")
+
+	if organize {
+		fakePathDir := path.Dir(fakePath)
+
+		if _, err := os.Stat(fakePathDir); os.IsNotExist(err) {
+			return
+		}
+	} else {
+		fakePath = path.Base(fakePath)
+	}
+
+	matchedFiles, err := filepath.Glob(fakePath)
+	if err != nil {
+		fmt.Println("Error checking exist, maybe match pattern is not correct: " + fakePath)
+	}
+
+	if len(matchedFiles) != 0 {
+		fmt.Printf("Resource(s) probably existed: %v\n", matchedFiles)
+		os.Exit(0)
+	}
+}
+
 func main() {
 	cmdArgs := parseArgs()
 
 	singleURL := getSourceURL()
 	httpClient := getHTTPClient(cmdArgs)
 
+	checkExist(cmdArgs, singleURL, *cmdArgs.organize)
 	matchedResult := parseDOM(singleURL, httpClient)
 
 	for _, targetURL := range matchedResult {
