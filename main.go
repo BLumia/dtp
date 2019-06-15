@@ -92,7 +92,7 @@ func getSiteName(sourceURL *url.URL) (string, []string) {
 
 	// Try DeviantArt
 	{
-		re := regexp.MustCompile(`deviantart\.com\/(\w+)\/art\/([\w-\d]+)`)
+		re := regexp.MustCompile(`deviantart\.com\/([\w-]+)\/art\/([\w-]+)`)
 		matchedResult := re.FindStringSubmatch(urlStr)
 
 		if matchedResult != nil {
@@ -143,6 +143,18 @@ func parseDeviantArtDomByXPath(htmlDom []byte) []string {
 	return matchedResult
 }
 
+func parseDeviantArtDomByXPathFallback(htmlDom []byte) []string {
+	doc, _ := htmlquery.Parse(bytes.NewReader(htmlDom))
+	list := htmlquery.Find(doc, "//img[contains(@class, 'dev-content-full')]")
+	var matchedResult []string
+	for _, oneElement := range list {
+		matchedResult = append(matchedResult, htmlquery.SelectAttr(oneElement, "src"))
+	}
+	matchedResult = removeDuplicates(matchedResult)
+
+	return matchedResult
+}
+
 func parseTwitterDomByXPath(htmlDom []byte) []string {
 	doc, _ := htmlquery.Parse(bytes.NewReader(htmlDom))
 	list := htmlquery.Find(doc, "//div[contains(@class,'permalink-tweet')][1]//div[contains(@class,'AdaptiveMedia-photoContainer')]//img/@src")
@@ -156,7 +168,7 @@ func parseTwitterDomByXPath(htmlDom []byte) []string {
 }
 
 func parseTwitterDomByRegex(htmlDom []byte) []string {
-	re := regexp.MustCompile("http[s]?:\\/\\/pbs\\.twimg\\.com\\/media\\/\\w+\\.(?:jpg|png)")
+	re := regexp.MustCompile(`http[s]?:\/\/pbs\.twimg\.com\/media\/\w+\.(?:jpg|png)`)
 	matchedResult := removeDuplicates(re.FindAllString(string(htmlDom), -1))
 
 	return matchedResult
@@ -173,31 +185,40 @@ func parseDOM(siteName string, url *url.URL, client *http.Client) []string {
 	return nil
 }
 
-func parseDeviantArtDOM(url *url.URL, client *http.Client) []string {
-	fmt.Println("[DeviantArt] [fetch] Downloading web page...")
-
+func getDomStr(url *url.URL, client *http.Client) []byte {
 	resp, err := client.Get(url.String())
 	if err != nil {
-		fmt.Println("Error getting web page: " + url.String())
+		fmt.Println("[Panic] Error getting web page: " + url.String())
 		os.Exit(2)
 	}
 	defer resp.Body.Close()
 
 	htmlDomStr, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		fmt.Println("Error reading web page: " + url.String())
+		fmt.Println("[Panic] Error reading web page: " + url.String())
 		os.Exit(2)
 	}
+
+	return htmlDomStr
+}
+
+func parseDeviantArtDOM(url *url.URL, client *http.Client) []string {
+	fmt.Println("[DeviantArt] [fetch] Downloading web page...")
+
+	htmlDomStr := getDomStr(url, client)
 
 	fmt.Println("[DeviantArt] [match] Parsing web page...")
 	matchedResult := parseDeviantArtDomByXPath(htmlDomStr)
 
 	if len(matchedResult) == 0 {
-		fmt.Println("XPath match didn't find Download button, quit...")
-		os.Exit(0)
+		fmt.Println("[DeviantArt] [match] Download button match failed, will do another try...")
+		matchedResult = parseDeviantArtDomByXPathFallback(htmlDomStr)
 	}
 
-	resp.Cookies()
+	if len(matchedResult) == 0 {
+		fmt.Println("[DeviantArt] [match] Still cannot find download link, quit...")
+		os.Exit(0)
+	}
 
 	fmt.Printf("[DeviantArt] [match] resource(s): %v\n", matchedResult)
 	return matchedResult
@@ -206,18 +227,7 @@ func parseDeviantArtDOM(url *url.URL, client *http.Client) []string {
 func parseTwitterDOM(url *url.URL, client *http.Client) []string {
 	fmt.Println("[Twitter] [fetch] Downloading web page...")
 
-	resp, err := client.Get(url.String())
-	if err != nil {
-		fmt.Println("Error getting web page: " + url.String())
-		os.Exit(2)
-	}
-	defer resp.Body.Close()
-
-	htmlDomStr, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		fmt.Println("Error reading web page: " + url.String())
-		os.Exit(2)
-	}
+	htmlDomStr := getDomStr(url, client)
 
 	fmt.Println("[Twitter] [match] Parsing web page...")
 	matchedResult := parseTwitterDomByXPath(htmlDomStr)
@@ -299,13 +309,23 @@ func downloadAndSave(siteName string, targetDownloadPath string, targetURL strin
 	}
 	defer resp.Body.Close()
 
-	// if no suffix in fileName, add suffix by reading response header?
+	// if no suffix in fileName, add suffix by reading response header.
 	if !strings.ContainsAny(fileName, ".") {
 		dispositionStr := resp.Header.Get("Content-Disposition")
 		_, params, err := mime.ParseMediaType(dispositionStr)
 		if err == nil {
 			dispositionFilename := params["filename"]
 			suffix := filepath.Ext(dispositionFilename)
+			fileName = fileName + suffix
+		}
+	}
+
+	// still no suffix in fileName? try from content-type
+	if !strings.ContainsAny(fileName, ".") {
+		contentTypeStr := resp.Header.Get("Content-Type")
+		exts, err := mime.ExtensionsByType(contentTypeStr)
+		if err == nil && len(exts) > 0 {
+			suffix := exts[0]
 			fileName = fileName + suffix
 		}
 	}
