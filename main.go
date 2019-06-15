@@ -346,6 +346,8 @@ func checkExist(cmdArgs typeCmdArgs, siteName string, urlKeySegment []string, or
 		return
 	}
 
+	fmt.Printf("[%s] [existence] existence check...\n", siteName)
+
 	fakePath := getTargetFilePath(siteName, urlKeySegment, "*")
 
 	if organize {
@@ -358,13 +360,16 @@ func checkExist(cmdArgs typeCmdArgs, siteName string, urlKeySegment []string, or
 		fakePath = path.Base(fakePath)
 	}
 
+	if !strings.ContainsAny(fakePath, ".") {
+		fakePath = fakePath + ".*"
+	}
+
 	matchedFiles, err := filepath.Glob(fakePath)
 	if err != nil {
 		fmt.Println("Error checking exist, maybe match pattern is not correct: " + fakePath)
 	}
-
 	if len(matchedFiles) != 0 {
-		fmt.Printf("Resource(s) probably existed: %v\n", matchedFiles)
+		fmt.Printf("[%s] [existence] Resource(s) probably existed: %v\n", siteName, matchedFiles)
 		os.Exit(0)
 	}
 }
