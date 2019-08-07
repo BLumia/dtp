@@ -152,7 +152,18 @@ func parseDeviantArtDomByXPathFallback(htmlDom []byte) []string {
 	}
 	matchedResult = removeDuplicates(matchedResult)
 
-	return matchedResult
+	if len(matchedResult) != 0 {
+		return matchedResult
+	}
+
+	list2 := htmlquery.Find(doc, "//img[contains(@class, 'view-mode-normal')]")
+	var matchedResult2 []string
+	for _, oneElement := range list2 {
+		matchedResult2 = append(matchedResult2, htmlquery.SelectAttr(oneElement, "src"))
+	}
+	matchedResult2 = removeDuplicates(matchedResult2)
+
+	return matchedResult2
 }
 
 func parseTwitterDomByXPath(htmlDom []byte) []string {
