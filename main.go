@@ -1,4 +1,12 @@
 // dtp project main.go
+
+/*
+in case we need to test a XPath
+function getElementByXpath(path) {
+  return document.evaluate(path, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+}
+*/
+
 package main
 
 import (
@@ -133,37 +141,21 @@ func getHTTPClient(cmdArgs typeCmdArgs) *http.Client {
 
 func parseDeviantArtDomByXPath(htmlDom []byte) []string {
 	doc, _ := htmlquery.Parse(bytes.NewReader(htmlDom))
-	list := htmlquery.Find(doc, "//a[span[text()='Download']]")
-	var matchedResult []string
-	for _, oneElement := range list {
-		matchedResult = append(matchedResult, htmlquery.SelectAttr(oneElement, "href"))
-	}
-	matchedResult = removeDuplicates(matchedResult)
-
-	return matchedResult
-}
-
-func parseDeviantArtDomByXPathFallback(htmlDom []byte) []string {
-	doc, _ := htmlquery.Parse(bytes.NewReader(htmlDom))
-	list := htmlquery.Find(doc, "//img[contains(@class, 'dev-content-full')]")
+	list := htmlquery.Find(doc, "//div[@data-hook='art_stage']//img")
 	var matchedResult []string
 	for _, oneElement := range list {
 		matchedResult = append(matchedResult, htmlquery.SelectAttr(oneElement, "src"))
 	}
 	matchedResult = removeDuplicates(matchedResult)
 
-	if len(matchedResult) != 0 {
-		return matchedResult
-	}
+	return matchedResult
+}
 
-	list2 := htmlquery.Find(doc, "//img[contains(@class, 'view-mode-normal')]")
-	var matchedResult2 []string
-	for _, oneElement := range list2 {
-		matchedResult2 = append(matchedResult2, htmlquery.SelectAttr(oneElement, "src"))
-	}
-	matchedResult2 = removeDuplicates(matchedResult2)
+func parseDeviantArtDomByRegexFallback(htmlDom []byte) []string {
+	re := regexp.MustCompile(`"(http[s]?:\/\/www\.deviantart\.com\/download\/\w+\/[\w-]+\.(?:jpg|png)[\w=?;&]+)"`)
+	matchedResult := removeDuplicates(re.FindAllString(string(htmlDom), -1))
 
-	return matchedResult2
+	return matchedResult
 }
 
 func parseTwitterDomByXPath(htmlDom []byte) []string {
@@ -223,7 +215,7 @@ func parseDeviantArtDOM(url *url.URL, client *http.Client) []string {
 
 	if len(matchedResult) == 0 {
 		fmt.Println("[DeviantArt] [match] Download button match failed, will do another try...")
-		matchedResult = parseDeviantArtDomByXPathFallback(htmlDomStr)
+		matchedResult = parseDeviantArtDomByRegexFallback(htmlDomStr)
 	}
 
 	if len(matchedResult) == 0 {
@@ -386,6 +378,7 @@ func checkExist(cmdArgs typeCmdArgs, siteName string, urlKeySegment []string, or
 }
 
 func main() {
+	fmt.Println("Running dtp rev 2")
 	cmdArgs := parseArgs()
 
 	singleURL := getSourceURL()
