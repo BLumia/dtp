@@ -342,6 +342,14 @@ func downloadAndSave(siteName string, targetDownloadPath string, targetURL strin
 	fmt.Printf("[%s] [save] [resource] %s ...\n", siteName, fileName)
 
 	io.Copy(out, resp.Body)
+
+	fmt.Printf("[%s] [sync] [resource] %s ...\n", siteName, fileName)
+
+	err = out.Sync()
+	if err != nil {
+		fmt.Printf("Error when sync file to disk: %s\n", err)
+		return
+	}
 }
 
 func checkExist(cmdArgs typeCmdArgs, siteName string, urlKeySegment []string, organize bool) {
