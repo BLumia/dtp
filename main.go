@@ -11,6 +11,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -30,9 +31,10 @@ import (
 )
 
 type typeCmdArgs struct {
-	proxy      *string
-	organize   *bool
-	checkExist *bool
+	proxy          *string
+	organize       *bool
+	checkExistence *bool
+	daemon         *bool
 }
 
 func removeDuplicates(elements []string) []string {
@@ -61,12 +63,13 @@ func parseArgs() typeCmdArgs {
 
 	cmdArgs.proxy = flag.String("p", "socks5://127.0.0.1:1080/", "a valid proxy url")
 	cmdArgs.organize = flag.Bool("o", false, "self-organize downloaded file")
-	cmdArgs.checkExist = flag.Bool("e", false, "check if resource existed to avoid re-download")
+	cmdArgs.checkExistence = flag.Bool("e", false, "check if resource existed to avoid re-download")
+	cmdArgs.daemon = flag.Bool("d", false, "start a http api server daemon at :1704")
 
 	flag.Parse()
 
 	urlList := flag.Args()
-	if len(urlList) == 0 {
+	if len(urlList) == 0 && ! *cmdArgs.daemon {
 		flag.Usage()
 		os.Exit(2)
 	}
@@ -85,9 +88,7 @@ func getSourceURL() *url.URL {
 	return singleURL
 }
 
-func getSiteName(sourceURL *url.URL) (string, []string) {
-	urlStr := sourceURL.String()
-
+func getSiteNameFromUrlStr(urlStr string) (string, []string) {
 	// Try Twitter
 	{
 		re := regexp.MustCompile(`twitter\.com\/(\w+)\/status\/(\d+)`)
@@ -111,7 +112,12 @@ func getSiteName(sourceURL *url.URL) (string, []string) {
 	return "Unknown", nil
 }
 
-func getHTTPClient(cmdArgs typeCmdArgs) *http.Client {
+func getSiteName(sourceURL *url.URL) (string, []string) {
+	urlStr := sourceURL.String()
+	return getSiteNameFromUrlStr(urlStr)
+}
+
+func (cmdArgs *typeCmdArgs) getHTTPClient() *http.Client {
 	proxyURL, err := url.ParseRequestURI(*cmdArgs.proxy)
 	if err != nil {
 		fmt.Println("Invalid proxy: " + *cmdArgs.proxy)
@@ -249,6 +255,16 @@ func parseTwitterDOM(url *url.URL, client *http.Client) []string {
 	return matchedResult
 }
 
+func stripQueryParam(inURL string) string {
+	u, err := url.Parse(inURL)
+	if err != nil {
+		// TODO: log or handle error, in the meanwhile just return the original
+		return inURL
+	}
+	u.RawQuery = "";
+	return u.String()
+}
+
 func getTargetFilePath(siteName string, urlKeySegment []string, targetURL string) string {
 
 	switch siteName {
@@ -258,7 +274,7 @@ func getTargetFilePath(siteName string, urlKeySegment []string, targetURL string
 			statusID := urlKeySegment[2]
 
 			folders := []string{"Twitter", userName}
-			fileName := fmt.Sprintf("%s_%s", statusID, path.Base(targetURL))
+			fileName := fmt.Sprintf("%s_%s", statusID, path.Base(stripQueryParam(targetURL)))
 
 			pathStr := path.Join(folders...)
 			fullPath := path.Join(pathStr, fileName)
@@ -302,9 +318,10 @@ func downloadAndSave(siteName string, targetDownloadPath string, targetURL strin
 	}
 
 	fmt.Printf("[%s] [download] [resource] %s ...\n", siteName, targetURL)
-	if siteName == "Twitter" {
-		targetURL = targetURL + ":orig"
-	}
+	// no longer doing this...
+	// if siteName == "Twitter" {
+	// 	targetURL = targetURL + ":orig"
+	// }
 	resp, err := httpClient.Get(targetURL)
 	if err != nil {
 		fmt.Println("Error donwloading resource: " + targetURL)
@@ -352,9 +369,9 @@ func downloadAndSave(siteName string, targetDownloadPath string, targetURL strin
 	}
 }
 
-func checkExist(cmdArgs typeCmdArgs, siteName string, urlKeySegment []string, organize bool) {
-	if !*cmdArgs.checkExist {
-		return
+func (cmdArgs *typeCmdArgs) checkExist(siteName string, urlKeySegment []string, organize bool) bool {
+	if !*cmdArgs.checkExistence {
+		return false
 	}
 
 	fmt.Printf("[%s] [existence] existence check...\n", siteName)
@@ -365,7 +382,7 @@ func checkExist(cmdArgs typeCmdArgs, siteName string, urlKeySegment []string, or
 		fakePathDir := path.Dir(fakePath)
 
 		if _, err := os.Stat(fakePathDir); os.IsNotExist(err) {
-			return
+			return false
 		}
 	} else {
 		fakePath = path.Base(fakePath)
@@ -381,25 +398,65 @@ func checkExist(cmdArgs typeCmdArgs, siteName string, urlKeySegment []string, or
 	}
 	if len(matchedFiles) != 0 {
 		fmt.Printf("[%s] [existence] Resource(s) probably existed: %v\n", siteName, matchedFiles)
-		os.Exit(0)
+		return true
+	}
+
+	return false
+}
+
+func (cmdArgs *typeCmdArgs) apiUrlList(w http.ResponseWriter, r *http.Request) {
+	if r.Method == "POST" {
+		fmt.Println("[API] [start] received one request!")
+		r.ParseMultipartForm(32 << 20)
+		var matchedDownloadUrls []string
+		_ = json.Unmarshal([]byte(r.PostFormValue("urlList")), &matchedDownloadUrls)
+
+		singleURL := r.PostFormValue("source")
+		siteName, urlKeySegment := getSiteNameFromUrlStr(singleURL)
+		httpClient := cmdArgs.getHTTPClient()
+
+		existed := cmdArgs.checkExist(siteName, urlKeySegment, *cmdArgs.organize)
+		if existed {
+			return
+		}
+
+		for _, targetURL := range matchedDownloadUrls {
+			targetDownloadPath := getTargetFilePath(siteName, urlKeySegment, targetURL)
+			downloadAndSave(siteName, targetDownloadPath, targetURL, httpClient, *cmdArgs.organize)
+		}
+	
+		fmt.Println("[API] [end] Download finished!")
+	} else {
+		fmt.Fprintf(w, string("403"))
 	}
 }
 
 func main() {
-	fmt.Println("Running dtp rev 2")
+	fmt.Println("Running dtp rev 3")
 	cmdArgs := parseArgs()
 
-	singleURL := getSourceURL()
-	siteName, urlKeySegment := getSiteName(singleURL)
-	httpClient := getHTTPClient(cmdArgs)
-
-	checkExist(cmdArgs, siteName, urlKeySegment, *cmdArgs.organize)
-	matchedDownloadUrls := parseDOM(siteName, singleURL, httpClient)
-
-	for _, targetURL := range matchedDownloadUrls {
-		targetDownloadPath := getTargetFilePath(siteName, urlKeySegment, targetURL)
-		downloadAndSave(siteName, targetDownloadPath, targetURL, httpClient, *cmdArgs.organize)
+	if *cmdArgs.daemon {
+		http.HandleFunc("/urlList", cmdArgs.apiUrlList)
+		err := http.ListenAndServe(":1704", nil)
+		if err != nil {
+			fmt.Println(err)
+		}
+	} else {
+		singleURL := getSourceURL()
+		siteName, urlKeySegment := getSiteName(singleURL)
+		httpClient := cmdArgs.getHTTPClient()
+	
+		existed := cmdArgs.checkExist(siteName, urlKeySegment, *cmdArgs.organize)
+		if existed {
+			os.Exit(0)
+		}
+		matchedDownloadUrls := parseDOM(siteName, singleURL, httpClient)
+	
+		for _, targetURL := range matchedDownloadUrls {
+			targetDownloadPath := getTargetFilePath(siteName, urlKeySegment, targetURL)
+			downloadAndSave(siteName, targetDownloadPath, targetURL, httpClient, *cmdArgs.organize)
+		}
+	
+		fmt.Println("Download finished!")
 	}
-
-	fmt.Println("Download finished!")
 }
