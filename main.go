@@ -69,7 +69,7 @@ func parseArgs() typeCmdArgs {
 	flag.Parse()
 
 	urlList := flag.Args()
-	if len(urlList) == 0 && ! *cmdArgs.daemon {
+	if len(urlList) == 0 && !*cmdArgs.daemon {
 		flag.Usage()
 		os.Exit(2)
 	}
@@ -261,7 +261,7 @@ func stripQueryParam(inURL string) string {
 		// TODO: log or handle error, in the meanwhile just return the original
 		return inURL
 	}
-	u.RawQuery = "";
+	u.RawQuery = ""
 	return u.String()
 }
 
@@ -415,8 +415,12 @@ func (cmdArgs *typeCmdArgs) apiUrlList(w http.ResponseWriter, r *http.Request) {
 		siteName, urlKeySegment := getSiteNameFromUrlStr(singleURL)
 		httpClient := cmdArgs.getHTTPClient()
 
+		statusStr := "Source: " + singleURL // FIXME: status str change doesn't works.
+		defer fmt.Printf("[API] [end] Download end with status: %s\n", statusStr)
+
 		existed := cmdArgs.checkExist(siteName, urlKeySegment, *cmdArgs.organize)
 		if existed {
+			statusStr = "Existed!"
 			return
 		}
 
@@ -424,15 +428,15 @@ func (cmdArgs *typeCmdArgs) apiUrlList(w http.ResponseWriter, r *http.Request) {
 			targetDownloadPath := getTargetFilePath(siteName, urlKeySegment, targetURL)
 			downloadAndSave(siteName, targetDownloadPath, targetURL, httpClient, *cmdArgs.organize)
 		}
-	
-		fmt.Println("[API] [end] Download finished!")
+
+		statusStr = "Well done!"
 	} else {
 		fmt.Fprintf(w, string("403"))
 	}
 }
 
 func main() {
-	fmt.Println("Running dtp rev 3")
+	fmt.Println("Running dtp rev 4")
 	cmdArgs := parseArgs()
 
 	if *cmdArgs.daemon {
@@ -445,18 +449,18 @@ func main() {
 		singleURL := getSourceURL()
 		siteName, urlKeySegment := getSiteName(singleURL)
 		httpClient := cmdArgs.getHTTPClient()
-	
+
 		existed := cmdArgs.checkExist(siteName, urlKeySegment, *cmdArgs.organize)
 		if existed {
 			os.Exit(0)
 		}
 		matchedDownloadUrls := parseDOM(siteName, singleURL, httpClient)
-	
+
 		for _, targetURL := range matchedDownloadUrls {
 			targetDownloadPath := getTargetFilePath(siteName, urlKeySegment, targetURL)
 			downloadAndSave(siteName, targetDownloadPath, targetURL, httpClient, *cmdArgs.organize)
 		}
-	
+
 		fmt.Println("Download finished!")
 	}
 }
