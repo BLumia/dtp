@@ -415,8 +415,10 @@ func (cmdArgs *typeCmdArgs) apiUrlList(w http.ResponseWriter, r *http.Request) {
 		siteName, urlKeySegment := getSiteNameFromUrlStr(singleURL)
 		httpClient := cmdArgs.getHTTPClient()
 
-		statusStr := "Source: " + singleURL // FIXME: status str change doesn't works.
-		defer fmt.Printf("[API] [end] Download end with status: %s\n", statusStr)
+		statusStr := "Failed, source: " + singleURL
+		defer func(statusStr *string) {
+			fmt.Printf("[API] [end] Download end with status: %s\n", *statusStr)
+		}(&statusStr)
 
 		existed := cmdArgs.checkExist(siteName, urlKeySegment, *cmdArgs.organize)
 		if existed {
@@ -436,7 +438,7 @@ func (cmdArgs *typeCmdArgs) apiUrlList(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	fmt.Println("Running dtp rev 4")
+	fmt.Println("Running dtp rev 5")
 	cmdArgs := parseArgs()
 
 	if *cmdArgs.daemon {
