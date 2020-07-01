@@ -367,6 +367,7 @@ func downloadAndSave(siteName string, targetDownloadPath string, targetURL strin
 		fmt.Printf("Error when sync file to disk: %s\n", err)
 		return
 	}
+	out.Close()
 }
 
 func (cmdArgs *typeCmdArgs) checkExist(siteName string, urlKeySegment []string, organize bool) bool {
