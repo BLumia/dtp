@@ -302,7 +302,7 @@ func getTargetFilePath(siteName string, urlKeySegment []string, targetURL string
 	return "dtp_error_unsupported_url"
 }
 
-func downloadAndSave(siteName string, targetDownloadPath string, targetURL string, httpClient *http.Client, organize bool) {
+func downloadAndSave(siteName string, targetDownloadPath string, targetURL string, httpClient *http.Client, organize bool) bool {
 	pathStr := path.Dir(targetDownloadPath)
 	fileName := path.Base(targetDownloadPath)
 
@@ -325,7 +325,7 @@ func downloadAndSave(siteName string, targetDownloadPath string, targetURL strin
 	resp, err := httpClient.Get(targetURL)
 	if err != nil {
 		fmt.Println("Error donwloading resource: " + targetURL)
-		return
+		return false
 	}
 	defer resp.Body.Close()
 
@@ -353,7 +353,7 @@ func downloadAndSave(siteName string, targetDownloadPath string, targetURL strin
 	out, err := os.Create(fileName)
 	if err != nil {
 		fmt.Println("Error creating file for downloaded resource: " + fileName)
-		return
+		return false
 	}
 
 	fmt.Printf("[%s] [save] [resource] %s ...\n", siteName, fileName)
@@ -365,9 +365,11 @@ func downloadAndSave(siteName string, targetDownloadPath string, targetURL strin
 	err = out.Sync()
 	if err != nil {
 		fmt.Printf("Error when sync file to disk: %s\n", err)
-		return
+		return false
 	}
 	out.Close()
+
+	return true
 }
 
 func (cmdArgs *typeCmdArgs) checkExist(siteName string, urlKeySegment []string, organize bool) bool {
@@ -429,7 +431,10 @@ func (cmdArgs *typeCmdArgs) apiUrlList(w http.ResponseWriter, r *http.Request) {
 
 		for _, targetURL := range matchedDownloadUrls {
 			targetDownloadPath := getTargetFilePath(siteName, urlKeySegment, targetURL)
-			downloadAndSave(siteName, targetDownloadPath, targetURL, httpClient, *cmdArgs.organize)
+			succ := downloadAndSave(siteName, targetDownloadPath, targetURL, httpClient, *cmdArgs.organize)
+			if !succ {
+				return
+			}
 		}
 
 		statusStr = "Well done!"
