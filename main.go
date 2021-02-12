@@ -322,10 +322,17 @@ func downloadAndSave(siteName string, targetDownloadPath string, targetURL strin
 	// if siteName == "Twitter" {
 	// 	targetURL = targetURL + ":orig"
 	// }
+	retry := 5
+Label_retry:
 	resp, err := httpClient.Get(targetURL)
 	if err != nil {
-		fmt.Println("Error donwloading resource: " + targetURL)
-		return false
+		fmt.Println("Error donwloading resource: " + targetURL + ", retry...")
+		if retry > 0 {
+			retry--
+			goto Label_retry
+		} else {
+			return false
+		}
 	}
 	defer resp.Body.Close()
 
@@ -433,6 +440,7 @@ func (cmdArgs *typeCmdArgs) apiUrlList(w http.ResponseWriter, r *http.Request) {
 			targetDownloadPath := getTargetFilePath(siteName, urlKeySegment, targetURL)
 			succ := downloadAndSave(siteName, targetDownloadPath, targetURL, httpClient, *cmdArgs.organize)
 			if !succ {
+				statusStr = "Error when saving!" + singleURL
 				return
 			}
 		}
