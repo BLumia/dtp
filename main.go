@@ -37,6 +37,11 @@ type typeCmdArgs struct {
 	daemon         *bool
 }
 
+type Config struct {
+	Proxy      string `json:"proxy"`
+	WorkingDir string `json:"working_dir"`
+}
+
 func removeDuplicates(elements []string) []string {
 	encountered := map[string]bool{}
 
@@ -51,7 +56,7 @@ func removeDuplicates(elements []string) []string {
 	return result
 }
 
-func parseArgs() typeCmdArgs {
+func parseArgs(cfg Config) typeCmdArgs {
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [OPTIONS] URL\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "Example: %s https://twitter.com/doesnotmatter/status/978152342536077313\n", os.Args[0])
@@ -61,7 +66,7 @@ func parseArgs() typeCmdArgs {
 
 	var cmdArgs typeCmdArgs
 
-	cmdArgs.proxy = flag.String("p", "socks5://127.0.0.1:1080/", "a valid proxy url")
+	cmdArgs.proxy = flag.String("p", cfg.Proxy, "a valid proxy url")
 	cmdArgs.organize = flag.Bool("o", false, "self-organize downloaded file")
 	cmdArgs.checkExistence = flag.Bool("e", false, "check if resource existed to avoid re-download")
 	cmdArgs.daemon = flag.Bool("d", false, "start a http api server daemon at :1704")
@@ -452,8 +457,33 @@ func (cmdArgs *typeCmdArgs) apiUrlList(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	fmt.Println("Running dtp rev 5")
-	cmdArgs := parseArgs()
+	fmt.Println("Running dtp rev 6")
+
+	ex, err := os.Executable()
+	if err != nil {
+		panic(err)
+	}
+
+	cfg := Config{
+		Proxy: "socks5://127.0.0.1:1080/",
+	}
+
+	configFilePath := path.Join(filepath.Dir(ex), "config.json")
+	jsonFile, err := os.Open(configFilePath)
+	if err == nil {
+		defer jsonFile.Close()
+		byteValue, _ := ioutil.ReadAll(jsonFile)
+		json.Unmarshal(byteValue, &cfg)
+		if len(cfg.WorkingDir) > 0 {
+			err = os.Chdir(cfg.WorkingDir)
+			if err != nil {
+				panic(err)
+			}
+			fmt.Println("Working Dir: " + cfg.WorkingDir)
+		}
+	}
+
+	cmdArgs := parseArgs(cfg)
 
 	if *cmdArgs.daemon {
 		http.HandleFunc("/urlList", cmdArgs.apiUrlList)
