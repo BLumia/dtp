@@ -27,6 +27,7 @@ import (
 	"strings"
 
 	"github.com/antchfx/htmlquery"
+	"github.com/pterm/pterm"
 	"golang.org/x/net/proxy"
 )
 
@@ -270,7 +271,7 @@ func stripQueryParam(inURL string) string {
 	return u.String()
 }
 
-func getTargetFilePath(siteName string, urlKeySegment []string, targetURL string) string {
+func getTargetFilePath(siteName string, urlKeySegment []string, targetURL string) (string, string) {
 
 	switch siteName {
 	case "Twitter":
@@ -284,7 +285,7 @@ func getTargetFilePath(siteName string, urlKeySegment []string, targetURL string
 			pathStr := path.Join(folders...)
 			fullPath := path.Join(pathStr, fileName)
 
-			return fullPath
+			return fullPath, statusID
 		}
 	case "DeviantArt":
 		if urlKeySegment != nil {
@@ -297,23 +298,25 @@ func getTargetFilePath(siteName string, urlKeySegment []string, targetURL string
 			pathStr := path.Join(folders...)
 			fullPath := path.Join(pathStr, fileName)
 
-			return fullPath
+			return fullPath, artID
 		}
 	}
 
 	fmt.Println("Unsupported site:" + siteName)
 	os.Exit(2)
 
-	return "dtp_error_unsupported_url"
+	return "dtp_error_unsupported_url", "Unknown"
 }
 
-func downloadAndSave(siteName string, targetDownloadPath string, targetURL string, httpClient *http.Client, organize bool) bool {
+func downloadAndSave(siteName string, targetDownloadPath string, targetURL string, httpClient *http.Client, organize bool,
+	spinner *pterm.SpinnerPrinter) bool {
+
 	pathStr := path.Dir(targetDownloadPath)
 	fileName := path.Base(targetDownloadPath)
 
 	if organize {
 		if _, err := os.Stat(pathStr); os.IsNotExist(err) {
-			fmt.Printf("[%s] [mkdir] New folder for resources: %s\n", siteName, pathStr)
+			spinner.UpdateText(fmt.Sprintf("[%s] [mkdir] New folder for resources: %s", siteName, pathStr))
 			err := os.MkdirAll(pathStr, 0755)
 			if err != nil {
 				fmt.Println("Error creating folder for store resource: " + fileName)
@@ -322,7 +325,7 @@ func downloadAndSave(siteName string, targetDownloadPath string, targetURL strin
 		fileName = targetDownloadPath
 	}
 
-	fmt.Printf("[%s] [download] [resource] %s ...\n", siteName, targetURL)
+	spinner.UpdateText(fmt.Sprintf("[%s] [download] [resource] %s ...", siteName, targetURL))
 	// no longer doing this...
 	// if siteName == "Twitter" {
 	// 	targetURL = targetURL + ":orig"
@@ -331,7 +334,7 @@ func downloadAndSave(siteName string, targetDownloadPath string, targetURL strin
 Label_retry:
 	resp, err := httpClient.Get(targetURL)
 	if err != nil {
-		fmt.Println("Error donwloading resource: " + targetURL + ", retry...")
+		spinner.UpdateText(fmt.Sprintln("Error donwloading resource: " + targetURL + ", retry..."))
 		if retry > 0 {
 			retry--
 			goto Label_retry
@@ -368,15 +371,15 @@ Label_retry:
 		return false
 	}
 
-	fmt.Printf("[%s] [save] [resource] %s ...\n", siteName, fileName)
+	spinner.UpdateText(fmt.Sprintf("[%s] [save] [resource] %s ...", siteName, fileName))
 
 	io.Copy(out, resp.Body)
 
-	fmt.Printf("[%s] [sync] [resource] %s ...\n", siteName, fileName)
+	spinner.UpdateText(fmt.Sprintf("[%s] [sync] [resource] %s ...", siteName, fileName))
 
 	err = out.Sync()
 	if err != nil {
-		fmt.Printf("Error when sync file to disk: %s\n", err)
+		fmt.Printf("Error when sync file to disk: %s", err)
 		return false
 	}
 	out.Close()
@@ -384,20 +387,22 @@ Label_retry:
 	return true
 }
 
-func (cmdArgs *typeCmdArgs) checkExist(siteName string, urlKeySegment []string, organize bool) bool {
+func (cmdArgs *typeCmdArgs) checkExist(siteName string, urlKeySegment []string, organize bool,
+	spinner *pterm.SpinnerPrinter) (bool, string) {
+
 	if !*cmdArgs.checkExistence {
-		return false
+		return false, ""
 	}
 
-	fmt.Printf("[%s] [existence] existence check...\n", siteName)
+	spinner.UpdateText(fmt.Sprintf("[%s] [existence] existence check...", siteName))
 
-	fakePath := getTargetFilePath(siteName, urlKeySegment, "*")
+	fakePath, artId := getTargetFilePath(siteName, urlKeySegment, "*")
 
 	if organize {
 		fakePathDir := path.Dir(fakePath)
 
 		if _, err := os.Stat(fakePathDir); os.IsNotExist(err) {
-			return false
+			return false, artId
 		}
 	} else {
 		fakePath = path.Base(fakePath)
@@ -412,16 +417,16 @@ func (cmdArgs *typeCmdArgs) checkExist(siteName string, urlKeySegment []string, 
 		fmt.Println("Error checking exist, maybe match pattern is not correct: " + fakePath)
 	}
 	if len(matchedFiles) != 0 {
-		fmt.Printf("[%s] [existence] Resource(s) probably existed: %v\n", siteName, matchedFiles)
-		return true
+		pterm.Debug.Println(fmt.Sprintf("[%s] [existence] Resource(s) probably existed: %v", siteName, matchedFiles))
+		return true, artId
 	}
 
-	return false
+	return false, artId
 }
 
 func (cmdArgs *typeCmdArgs) apiUrlList(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "POST" {
-		fmt.Println("[API] [start] received one request!")
+		spinnerInfo, _ := pterm.DefaultSpinner.Start("[API] [start] received one request!")
 		r.ParseMultipartForm(32 << 20)
 		var matchedDownloadUrls []string
 		_ = json.Unmarshal([]byte(r.PostFormValue("urlList")), &matchedDownloadUrls)
@@ -431,19 +436,29 @@ func (cmdArgs *typeCmdArgs) apiUrlList(w http.ResponseWriter, r *http.Request) {
 		httpClient := cmdArgs.getHTTPClient()
 
 		statusStr := "Failed, source: " + singleURL
+		artId := ""
 		defer func(statusStr *string) {
-			fmt.Printf("[API] [end] Download end with status: %s\n", *statusStr)
+			finalMsg := fmt.Sprintf("[%s] [%s] Final Status: %s", siteName, artId, *statusStr)
+			if strings.Contains(*statusStr, "Error when saving") {
+				spinnerInfo.Fail(finalMsg)
+			} else if strings.Contains(*statusStr, "Well done") {
+				spinnerInfo.Success(finalMsg)
+			} else {
+				spinnerInfo.Info(finalMsg)
+			}
 		}(&statusStr)
 
-		existed := cmdArgs.checkExist(siteName, urlKeySegment, *cmdArgs.organize)
+		existed, _artId := cmdArgs.checkExist(siteName, urlKeySegment, *cmdArgs.organize, spinnerInfo)
 		if existed {
 			statusStr = "Existed!"
+			artId = _artId
 			return
 		}
 
 		for _, targetURL := range matchedDownloadUrls {
-			targetDownloadPath := getTargetFilePath(siteName, urlKeySegment, targetURL)
-			succ := downloadAndSave(siteName, targetDownloadPath, targetURL, httpClient, *cmdArgs.organize)
+			targetDownloadPath, artId2 := getTargetFilePath(siteName, urlKeySegment, targetURL)
+			artId = artId2
+			succ := downloadAndSave(siteName, targetDownloadPath, targetURL, httpClient, *cmdArgs.organize, spinnerInfo)
 			if !succ {
 				statusStr = "Error when saving!" + singleURL
 				return
@@ -457,7 +472,8 @@ func (cmdArgs *typeCmdArgs) apiUrlList(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	fmt.Println("Running dtp rev 6")
+	// pterm.EnableDebugMessages()
+	pterm.Info.Println("Running dtp rev 7")
 
 	ex, err := os.Executable()
 	if err != nil {
@@ -479,7 +495,7 @@ func main() {
 			if err != nil {
 				panic(err)
 			}
-			fmt.Println("Working Dir: " + cfg.WorkingDir)
+			pterm.Info.Println("Working Dir: " + cfg.WorkingDir)
 		}
 	}
 
@@ -496,15 +512,16 @@ func main() {
 		siteName, urlKeySegment := getSiteName(singleURL)
 		httpClient := cmdArgs.getHTTPClient()
 
-		existed := cmdArgs.checkExist(siteName, urlKeySegment, *cmdArgs.organize)
+		spinnerInfo, _ := pterm.DefaultSpinner.Start("[start] received one request!")
+		existed, _ := cmdArgs.checkExist(siteName, urlKeySegment, *cmdArgs.organize, spinnerInfo)
 		if existed {
 			os.Exit(0)
 		}
 		matchedDownloadUrls := parseDOM(siteName, singleURL, httpClient)
 
 		for _, targetURL := range matchedDownloadUrls {
-			targetDownloadPath := getTargetFilePath(siteName, urlKeySegment, targetURL)
-			downloadAndSave(siteName, targetDownloadPath, targetURL, httpClient, *cmdArgs.organize)
+			targetDownloadPath, _ := getTargetFilePath(siteName, urlKeySegment, targetURL)
+			downloadAndSave(siteName, targetDownloadPath, targetURL, httpClient, *cmdArgs.organize, spinnerInfo)
 		}
 
 		fmt.Println("Download finished!")
